@@ -288,13 +288,23 @@ def _detect_distro():
 _DISTRO = _detect_distro()
 
 
+def _find_bin(name):
+    """Like which() but also checks /usr/sbin and /sbin."""
+    if which(name):
+        return True
+    for extra in ["/usr/sbin", "/sbin", "/usr/local/sbin"]:
+        if (Path(extra) / name).exists():
+            return True
+    return False
+
+
 def _try_install(pkg, cmd_name=None):
     """Try to install a package using the distro's package manager.
 
     Returns True if the command is now available.
     """
     target = cmd_name or pkg
-    if which(target):
+    if _find_bin(target):
         return True
 
     pm_map = {
@@ -307,9 +317,15 @@ def _try_install(pkg, cmd_name=None):
         return False
 
     print(f"  Installing {target} ({' '.join(cmd)})…")
-    subprocess.run(cmd, capture_output=True)
-    return which(target)
-
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        # Try without sudo (already root, or passwordless).
+        cmd2 = cmd[1:] if cmd[0] == "sudo" else cmd
+        r2 = subprocess.run(cmd2, capture_output=True, text=True)
+        if r2.returncode != 0:
+            print(f"    \033[33minstall failed: {r2.stderr.strip().splitlines()[-1] if r2.stderr else 'unknown error'}\033[0m")
+            return False
+    return _find_bin(target)
 
 def _install_yarn():
     """Install yarn via npm or corepack."""
@@ -330,24 +346,22 @@ def check_prerequisites():
     print(f"Checking prerequisites…  (detected: {_DISTRO})")
     issues = []
 
-    if not which("git"):
+    if not _find_bin("git"):
         if not _try_install("git"):
             issues.append("git not found. Install git.")
 
-    if not which("redis-server"):
+    if not _find_bin("redis-server"):
         pkg = "redis" if _DISTRO in ("arch", "redhat") else "redis-server"
         if not _try_install(pkg, "redis-server"):
             issues.append("redis-server not found. Install redis.")
 
-    if not which("node"):
-        # Try distro package first.
+    if not _find_bin("node"):
         ok = False
         if _DISTRO == "arch":
             ok = _try_install("nodejs", "node")
         elif _DISTRO == "ubuntu":
             ok = _try_install("nodejs", "node")
             if not ok:
-                # Ubuntu's nodejs is often ancient — try nodesource.
                 print("  Trying NodeSource setup for Node.js 24…")
                 subprocess.run(
                     "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -",
@@ -357,7 +371,6 @@ def check_prerequisites():
         elif _DISTRO == "redhat":
             ok = _try_install("nodejs", "node")
             if not ok:
-                # Try NodeSource for RHEL/Fedora.
                 print("  Trying NodeSource setup for Node.js 24…")
                 subprocess.run(
                     "curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -",
@@ -367,7 +380,7 @@ def check_prerequisites():
         if not ok:
             issues.append("node not found. Install Node.js >= 24.")
 
-    if not which("yarn"):
+    if not _find_bin("yarn"):
         if not _install_yarn():
             issues.append("yarn not found. Install with: npm install -g yarn")
 
