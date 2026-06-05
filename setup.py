@@ -205,13 +205,55 @@ def bootstrap_bench():
             print(f"Created {acl_path}")
 
 
+
+def ensure_uv():
+    """Install uv if it's not on PATH."""
+    if which("uv"):
+        return
+    print("uv not found — installing…")
+
+    # Try pip with --break-system-packages (pip >= 23).
+    subprocess.run(
+        ["python3", "-m", "pip", "install", "uv", "--break-system-packages"],
+        check=False, capture_output=True,
+    )
+    if which("uv"):
+        print("  uv installed via pip.\n")
+        return
+
+    # Try pip without the flag (older pip, or inside venv).
+    subprocess.run(
+        ["python3", "-m", "pip", "install", "uv"],
+        check=False, capture_output=True,
+    )
+    if which("uv"):
+        print("  uv installed via pip.\n")
+        return
+
+    # Fallback: standalone installer (curl | sh).
+    if which("curl"):
+        subprocess.run(
+            "curl -LsSf https://astral.sh/uv/install.sh | sh",
+            shell=True, check=False,
+        )
+        for extra in [Path.home() / ".local" / "bin", Path.home() / ".cargo" / "bin"]:
+            if (extra / "uv").exists():
+                os.environ["PATH"] = f"{extra}{os.pathsep}{os.environ['PATH']}"
+                break
+        if which("uv"):
+            print("  uv installed via curl | sh.\n")
+            return
+
+    print("\033[31mCould not install uv. Install manually: https://docs.astral.sh/uv/\033[0m")
+    sys.exit(1)
+
+
 def ensure_venv():
     """Create the virtual env if it doesn't exist."""
     if PYTHON.exists():
         return
     print("Creating virtual environment at env/ …")
     run(["uv", "venv", "env", "--python", "3.14"])
-    # Seed pip so bench subcommands that shell out to pip still work.
     run(["uv", "pip", "install", "pip", "--python", str(PYTHON)])
     print("  Virtual environment ready.\n")
 
@@ -225,8 +267,6 @@ def check_prerequisites():
         issues.append("node not found. Install Node.js >= 24.")
     if not which("yarn"):
         issues.append("yarn not found. Install with: npm install -g yarn")
-    if not which("uv"):
-        issues.append("uv not found. Install from https://docs.astral.sh/uv/")
     if not which("bench"):
         issues.append(
             "bench CLI not found. Install with: pipx install frappe-bench"
@@ -237,8 +277,6 @@ def check_prerequisites():
             print(f"  - {i}")
         sys.exit(1)
     print("  All prerequisites met.\n")
-
-
 def write_apps_txt():
     """Write sites/apps.txt so bench CLI knows which apps are installed."""
     apps = discover_apps()
@@ -550,6 +588,7 @@ def ensure_bench_dirs():
 
 def cmd_install(_args):
     """Install everything: venv, deps, build, site, patches."""
+    ensure_uv()
     bootstrap_bench()
     bootstrap_apps()
     ensure_venv()
