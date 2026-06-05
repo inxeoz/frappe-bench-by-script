@@ -258,32 +258,96 @@ def ensure_venv():
     print("  Virtual environment ready.\n")
 
 
+def auto_install(pkg, name, instructions=None):
+    """Try to install a system package via common package managers."""
+    if which(name or pkg):
+        return True
+
+    def _try(cmd, pkg_name, label):
+        r = subprocess.run([cmd, "install", "-y", pkg_name], capture_output=True)
+        return r.returncode == 0
+
+    # Detect package manager.
+    pm = None
+    for candidate, pkg_name in [
+        ("dnf", pkg), ("yum", pkg), ("apt-get", pkg),
+        ("apk", pkg), ("pacman", pkg), ("brew", pkg),
+        ("zypper", pkg),
+    ]:
+        if shutil.which(candidate):
+            pm = (candidate, pkg_name)
+            break
+
+    if pm and which("sudo"):
+        cmd = ["sudo", pm[0], "install", "-y", pm[1]]
+    elif pm:
+        cmd = [pm[0], "install", "-y", pm[1]]
+    else:
+        return False
+
+    print(f"  Installing {name or pkg} ({' '.join(cmd)})…")
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode == 0 and which(name or pkg):
+        return True
+    return False
+
+
+def _install_yarn():
+    """Install yarn via npm or corepack."""
+    if which("yarn"):
+        return True
+    if which("npm"):
+        subprocess.run(["npm", "install", "-g", "yarn"], capture_output=True)
+        if which("yarn"):
+            return True
+    if which("corepack"):
+        subprocess.run(["corepack", "enable"], capture_output=True)
+        if which("yarn"):
+            return True
+    return False
+
+
 def check_prerequisites():
     print("Checking prerequisites…")
     issues = []
+
+    if not which("git"):
+        if not auto_install("git", "git", "git not found. Install git."):
+            issues.append("git not found. Install git.")
+
     if not which("redis-server"):
-        issues.append("redis-server not found. Install redis.")
+        if not auto_install("redis", "redis-server",
+                            "redis-server not found. Install redis."):
+            issues.append("redis-server not found. Install redis.")
+
     if not which("node"):
-        issues.append("node not found. Install Node.js >= 24.")
+        if not auto_install("nodejs", "node",
+                            "node not found. Install Node.js >= 24."):
+            issues.append("node not found. Install Node.js >= 24.")
+
     if not which("yarn"):
-        issues.append("yarn not found. Install with: npm install -g yarn")
+        if not _install_yarn():
+            issues.append("yarn not found. Install with: npm install -g yarn")
+
     if not which("bench"):
         issues.append(
             "bench CLI not found. Install with: pipx install frappe-bench"
         )
+
     if issues:
         print("\033[31mPrerequisites missing:\033[0m")
         for i in issues:
             print(f"  - {i}")
         sys.exit(1)
     print("  All prerequisites met.\n")
+
+
 def write_apps_txt():
     """Write sites/apps.txt so bench CLI knows which apps are installed."""
     apps = discover_apps()
     apps_txt = SITES_DIR / "apps.txt"
     apps_txt.write_text("\n".join(apps) + "\n")
     print(f"Wrote {apps_txt}: {apps}")
-
 
 def install_python_deps():
     print("Installing Python dependencies…")
