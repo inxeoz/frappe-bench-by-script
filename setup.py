@@ -755,6 +755,15 @@ def ensure_bench_dirs():
 
 def cmd_install(_args):
     """Install everything: venv, deps, build, site, patches."""
+    # Discover apps first — show what we're working with.
+    APPS_DIR.mkdir(parents=True, exist_ok=True)
+    apps = discover_apps()
+    if not apps:
+        print("\033[33mWARNING: No apps found in apps/ — will clone Frappe.\033[0m\n")
+    else:
+        print(f"\033[1mUsing apps from apps/: \033[0m{', '.join(apps)} "
+              f"({len(apps)} app(s))\n")
+
     ensure_uv()
     bootstrap_bench()
     bootstrap_apps()
@@ -762,13 +771,14 @@ def cmd_install(_args):
     ensure_bench_dirs()
     check_prerequisites()
 
+    # Refresh after possible clone.
     apps = discover_apps()
-    print(f"Discovered {len(apps)} app(s) in apps/: {', '.join(apps)}\n")
 
     # Fast path: everything already installed.
     if verify_setup(silent=True) and _frontend_fresh():
         print("Everything is already set up.\n")
         return
+
 
     write_apps_txt()
     install_python_deps()
