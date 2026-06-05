@@ -1,0 +1,32 @@
+# Python virtual environment
+env/
+
+# Node
+node_modules/
+
+# Build artifacts
+sites/assets/
+sites/*/
+!sites/common_site_config.json
+!sites/apps.txt
+apps/*/frappe/dist/
+apps/*/frappe/public/dist/
+*.pyc
+__pycache__/
+
+logs/
+config/pids/
+
+# Redis
+config/*.rdb
+*.rdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
