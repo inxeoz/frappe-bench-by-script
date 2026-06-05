@@ -794,11 +794,20 @@ def cmd_install(_args):
     stop_service("redis_queue")
     if site:
         run(["bench", "use", site], cwd=ROOT, env=env_with_venv())
+        extra = [a for a in apps if a != "frappe"]
+        if extra:
+            start_redis()
+            time.sleep(1)
+            for app in extra:
+                print(f"  Installing app: {app}…")
+                run(["bench", "--site", site, "install-app", app],
+                    cwd=ROOT, env=env_with_venv())
+            stop_service("redis_cache")
+            stop_service("redis_queue")
     apply_patches()
     print("\n\033[32m✓ Installation complete.\033[0m")
     print(f"  Apps installed: {', '.join(apps)}")
     print("  Run: python setup.py start")
-
 
 def verify_setup(silent=False):
     """Check the environment is ready. Returns True if all good."""
