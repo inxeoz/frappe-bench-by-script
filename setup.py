@@ -353,34 +353,48 @@ def check_prerequisites():
     if not _find_bin("redis-server"):
         pkg = "redis" if _DISTRO in ("arch", "redhat") else "redis-server"
         if not _try_install(pkg, "redis-server"):
-            issues.append("redis-server not found. Install redis.")
-
-    if not _find_bin("node"):
-        ok = False
-        if _DISTRO == "arch":
-            ok = _try_install("nodejs", "node")
-        elif _DISTRO == "ubuntu":
-            ok = _try_install("nodejs", "node")
-            if not ok:
-                print("  Trying NodeSource setup for Node.js 24…")
+            # RHEL needs EPEL for redis.
+            if _DISTRO == "redhat":
+                print("  Enabling EPEL for redis…")
                 subprocess.run(
-                    "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -",
-                    shell=True, capture_output=True,
+                    ["sudo", "dnf", "install", "-y",
+                     "https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm"],
+                    capture_output=True,
                 )
-                ok = _try_install("nodejs", "node")
-        elif _DISTRO == "redhat":
-            ok = _try_install("nodejs", "node")
-            if not ok:
-                print("  Trying NodeSource setup for Node.js 24…")
-                subprocess.run(
-                    "curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -",
-                    shell=True, capture_output=True,
-                )
-                ok = _try_install("nodejs", "node")
-        if not ok:
-            issues.append("node not found. Install Node.js >= 24.")
+                if _try_install("redis", "redis-server"):
+                    pass  # installed via EPEL
+            if not _find_bin("redis-server"):
+                issues.append("redis-server not found. Install redis.")
 
-    if not _find_bin("yarn"):
+    # Check node version is >= 24.
+    node_ok = False
+    if _find_bin("node"):
+        r = subprocess.run(["node", "--version"], capture_output=True, text=True)
+        ver = r.stdout.strip().lstrip("v")
+        try:
+            major = int(ver.split(".")[0])
+            if major >= 24:
+                node_ok = True
+            else:
+                print(f"  Node {ver} found, but >= 24 required — upgrading…")
+        except (ValueError, IndexError):
+            pass
+
+    if not node_ok:
+        print("  Setting up Node.js 24 via NodeSource…")
+        if _DISTRO == "ubuntu":
+            subprocess.run(
+                "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -",
+                shell=True, capture_output=True,
+            )
+        elif _DISTRO in ("arch", "redhat"):
+            subprocess.run(
+                "curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -",
+                shell=True, capture_output=True,
+            )
+        if not _try_install("nodejs", "node"):
+            issues.append("node >= 24 not found. Install Node.js >= 24.")
+
         if not _install_yarn():
             issues.append("yarn not found. Install with: npm install -g yarn")
 
