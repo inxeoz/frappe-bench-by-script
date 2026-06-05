@@ -552,48 +552,17 @@ def create_site():
         return None
 
 def apply_patches():
-    """Apply bench-level patches listed in patches.txt.
-
-    These typically require a running site + MariaDB.  If they fail the
-    script continues; patches can be applied later via 'bench migrate'.
-    """
-    patches_file = ROOT / "patches.txt"
-    if not patches_file.exists():
+    """Run bench migrate to apply pending patches."""
+    sites = list(SITES_DIR.glob("*/site_config.json"))
+    if not sites:
         return
-    patches = [
-        line.strip()
-        for line in patches_file.read_text().splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    if not patches:
-        return
-    print("Applying patches…")
-    failed = []
-    for patch in patches:
-        print(f"  {patch} … ", end="", flush=True)
-        try:
-            result = run(
-                ["bench", "console"],
-                input_text=f"{patch}\n",
-                cwd=ROOT,
-                env=env_with_venv(),
-                capture=True,
-                check=False,
-            )
-            if result.returncode == 0:
-                print("\033[32mOK\033[0m")
-            else:
-                print(f"\033[33mskipped (exit {result.returncode})\033[0m")
-                failed.append(patch)
-        except Exception:
-            print("\033[33mskipped (error)\033[0m")
-            failed.append(patch)
-    if failed:
-        print(
-            f"\n\033[33m{len(failed)} patch(es) skipped.\033[0m"
-            "  Apply manually with: bench migrate"
-        )
+    site = sites[0].parent.name
+    print("Applying pending patches (bench migrate)…")
+    run(["bench", "--site", site, "migrate"], cwd=ROOT, env=env_with_venv(),
+        check=False)
     print()
+
+
 # ── service management ─────────────────────────────────────────────────────
 
 
