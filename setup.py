@@ -257,39 +257,58 @@ def ensure_venv():
     run(["uv", "pip", "install", "pip", "--python", str(PYTHON)])
     print("  Virtual environment ready.\n")
 
+def _detect_distro():
+    """Return ('arch'|'ubuntu'|'redhat'|'unknown') from /etc/os-release."""
+    try:
+        release = (Path("/etc/os-release").read_text()
+                   .replace('"', '').replace("'", ""))
+    except Exception:
+        return "unknown"
+    info = {}
+    for line in release.splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            info[k.strip()] = v.strip()
+    _id = info.get("ID", "").lower()
+    id_like = info.get("ID_LIKE", "").lower()
+    combined = f"{_id} {id_like}"
+    if "arch" in combined:
+        return "arch"
+    if "ubuntu" in combined or "debian" in combined:
+        return "ubuntu"
+    if "rhel" in combined or "fedora" in combined or "centos" in combined:
+        return "redhat"
+    if _id in ("ubuntu", "debian"):
+        return "ubuntu"
+    if _id in ("fedora", "rhel", "centos", "almalinux", "rocky"):
+        return "redhat"
+    return "unknown"
 
-def auto_install(pkg, name, instructions=None):
-    """Try to install a system package via common package managers."""
-    if which(name or pkg):
+
+_DISTRO = _detect_distro()
+
+
+def _try_install(pkg, cmd_name=None):
+    """Try to install a package using the distro's package manager.
+
+    Returns True if the command is now available.
+    """
+    target = cmd_name or pkg
+    if which(target):
         return True
 
-    def _try(cmd, pkg_name, label):
-        r = subprocess.run([cmd, "install", "-y", pkg_name], capture_output=True)
-        return r.returncode == 0
-
-    # Detect package manager.
-    pm = None
-    for candidate, pkg_name in [
-        ("dnf", pkg), ("yum", pkg), ("apt-get", pkg),
-        ("apk", pkg), ("pacman", pkg), ("brew", pkg),
-        ("zypper", pkg),
-    ]:
-        if shutil.which(candidate):
-            pm = (candidate, pkg_name)
-            break
-
-    if pm and which("sudo"):
-        cmd = ["sudo", pm[0], "install", "-y", pm[1]]
-    elif pm:
-        cmd = [pm[0], "install", "-y", pm[1]]
-    else:
+    pm_map = {
+        "arch":   ("pacman", ["sudo", "pacman", "-S", "--noconfirm", pkg]),
+        "ubuntu": ("apt-get", ["sudo", "apt-get", "install", "-y", pkg]),
+        "redhat": ("dnf",    ["sudo", "dnf", "install", "-y", pkg]),
+    }
+    pm_bin, cmd = pm_map.get(_DISTRO, (None, None))
+    if not pm_bin or not shutil.which(pm_bin):
         return False
 
-    print(f"  Installing {name or pkg} ({' '.join(cmd)})…")
-    r = subprocess.run(cmd, capture_output=True)
-    if r.returncode == 0 and which(name or pkg):
-        return True
-    return False
+    print(f"  Installing {target} ({' '.join(cmd)})…")
+    subprocess.run(cmd, capture_output=True)
+    return which(target)
 
 
 def _install_yarn():
@@ -308,21 +327,44 @@ def _install_yarn():
 
 
 def check_prerequisites():
-    print("Checking prerequisites…")
+    print(f"Checking prerequisites…  (detected: {_DISTRO})")
     issues = []
 
     if not which("git"):
-        if not auto_install("git", "git", "git not found. Install git."):
+        if not _try_install("git"):
             issues.append("git not found. Install git.")
 
     if not which("redis-server"):
-        if not auto_install("redis", "redis-server",
-                            "redis-server not found. Install redis."):
+        pkg = "redis" if _DISTRO in ("arch", "redhat") else "redis-server"
+        if not _try_install(pkg, "redis-server"):
             issues.append("redis-server not found. Install redis.")
 
     if not which("node"):
-        if not auto_install("nodejs", "node",
-                            "node not found. Install Node.js >= 24."):
+        # Try distro package first.
+        ok = False
+        if _DISTRO == "arch":
+            ok = _try_install("nodejs", "node")
+        elif _DISTRO == "ubuntu":
+            ok = _try_install("nodejs", "node")
+            if not ok:
+                # Ubuntu's nodejs is often ancient — try nodesource.
+                print("  Trying NodeSource setup for Node.js 24…")
+                subprocess.run(
+                    "curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -",
+                    shell=True, capture_output=True,
+                )
+                ok = _try_install("nodejs", "node")
+        elif _DISTRO == "redhat":
+            ok = _try_install("nodejs", "node")
+            if not ok:
+                # Try NodeSource for RHEL/Fedora.
+                print("  Trying NodeSource setup for Node.js 24…")
+                subprocess.run(
+                    "curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -",
+                    shell=True, capture_output=True,
+                )
+                ok = _try_install("nodejs", "node")
+        if not ok:
             issues.append("node not found. Install Node.js >= 24.")
 
     if not which("yarn"):
@@ -335,7 +377,16 @@ def check_prerequisites():
         )
 
     if issues:
-        print("\033[31mPrerequisites missing:\033[0m")
+        print(f"\n\033[31mPrerequisites missing ({_DISTRO}):\033[0m")
+        # Print distro-specific tips.
+        tips = {
+            "arch":   "sudo pacman -S git redis nodejs npm && npm install -g yarn",
+            "ubuntu": "sudo apt install git redis-server && curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt install -y nodejs && npm install -g yarn",
+            "redhat": "sudo dnf install git redis && curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash - && sudo dnf install -y nodejs && npm install -g yarn",
+        }
+        tip = tips.get(_DISTRO, "")
+        if tip:
+            print(f"  Quick install: {tip}")
         for i in issues:
             print(f"  - {i}")
         sys.exit(1)
@@ -348,6 +399,7 @@ def write_apps_txt():
     apps_txt = SITES_DIR / "apps.txt"
     apps_txt.write_text("\n".join(apps) + "\n")
     print(f"Wrote {apps_txt}: {apps}")
+
 
 def install_python_deps():
     print("Installing Python dependencies…")
