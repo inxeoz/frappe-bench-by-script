@@ -106,13 +106,37 @@ def _open_log(path):
     return open(path, "a")
 
 
+def _is_frappe_app(path):
+    """Check if a directory looks like a Frappe app by finding hooks.py or modules.txt."""
+    # Standard nested: apps/alis/alis/hooks.py
+    if ((path / path.name / "hooks.py").exists() or
+        (path / path.name / "modules.txt").exists()):
+        return True
+    # Flat: apps/alis/hooks.py
+    if ((path / "hooks.py").exists() or
+        (path / "modules.txt").exists()):
+        return True
+    # Has pyproject.toml or setup.py (older style).
+    if ((path / "pyproject.toml").exists() or
+        (path / "setup.py").exists()):
+        return True
+    return False
+
+
 def discover_apps():
-    """Return sorted list of app names found in apps/."""
+    """Return sorted list of app names found in apps/.
+
+    Detects standard (pyproject.toml), nested (alis/alis/hooks.py),
+    and flat (alis/hooks.py) layouts. Skips well-known non-app dirs.
+    """
     if not APPS_DIR.exists():
         return []
+    skip = {"node_modules", ".git", "__pycache__", "dist", "public", "build"}
     apps = []
     for d in sorted(APPS_DIR.iterdir()):
-        if d.is_dir() and (d / "pyproject.toml").exists():
+        if not d.is_dir() or d.name in skip or d.name.startswith("."):
+            continue
+        if _is_frappe_app(d):
             apps.append(d.name)
     return apps
 
